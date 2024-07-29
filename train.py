@@ -1,11 +1,13 @@
 from argparse import ArgumentParser
 
+import numpy as np
+import torch
 from torch.utils.data import DataLoader
 from torchvision import transforms
 from torch import nn
 from torch.optim import Adam
 from charades import CharadesDataset
-from utils import ResizeVideoTransform
+from utils import ResizeVideoTransform, VideoToTensorTransform, collate_fn
 
 parser = ArgumentParser()
 
@@ -41,20 +43,15 @@ match args.model:
     case _:
         raise Exception
 
-if args.collation == 'padding':
-    from utils import collate_padding
-    collate_fn = collate_padding
-else:
-    from utils import collate_trimming
-    collate_fn = collate_trimming
 
 transform = transforms.Compose([
     ResizeVideoTransform((224, 224)),
-    # VideoToTensorTransform(),
+    VideoToTensorTransform()
 ])
 
 dataset = CharadesDataset(transform=transform)
-data_loader = DataLoader(dataset, batch_size=4, num_workers=4, collate_fn=collate_fn)
+
+data_loader = DataLoader(dataset, batch_size=4, collate_fn=lambda batch: collate_fn(dataset, batch, args.collation))
 
 num_classes = 157
 model.head = nn.Linear(model.head[1].in_features, num_classes)  # Adjust the final layer to the number of classes in Charades
@@ -71,13 +68,13 @@ for epoch in range(num_epochs):
     for i, data in enumerate(data_loader):
         print(f"Video frames: {len(data["video"][0])}, Actions: {data["actions"]}")
         print(f"Objects: {data["objects"]}, Timings: {data["timings"]}")
-        inputs = data["video"].cuda()
-        labels = data["actions"].cuda()
+        inputs = torch.permute(data["video"], (0,2,1,3,4)).cuda()
         # Zero the parameter gradients
         optimizer.zero_grad()
 
         # Forward pass
         outputs = model(inputs)
+        labels = torch.stack(torch.tensor(np.array(data["actions"]))).cuda()
         loss = criterion(outputs, labels)
 
         # Backward pass and optimize
