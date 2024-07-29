@@ -1,0 +1,13 @@
+name: mvitv2-swin
+channels:
+  - pytorch
+  - nvidia
+  - conda-forge
+dependencies:
+  - python
+  - pytorch
+  - torchvision
+  - pytorch-cuda=12.4
+  - numpy
+  - remotezip
+  - opencv
