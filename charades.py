@@ -1,13 +1,23 @@
-import os
-from sys import stderr
 import datasets
 import cv2
 import numpy as np
+import os
+import torch
+from dataclasses import dataclass
+from sys import stderr
+from typing import List
 from itertools import cycle
 from collections import OrderedDict
 from torch.utils.data import IterableDataset
 from remotezip import RemoteZip
-from utils import timings_to_frames
+
+@dataclass
+class CharadesSample:
+    video: torch.Tensor
+    framerate: float
+    objects: List[str]
+    actions: List[int]
+    timings: List[int]
 
 class CharadesDataset(IterableDataset):
     def __init__(self, transform=None, shuffle_bufsize=1024, split="train"):
@@ -29,8 +39,17 @@ class CharadesDataset(IterableDataset):
     def __iter__(self):
         for video in cycle(self.videos):
             yield video
-    
-    def extract_sample(self, data):
+
+    def _convert_timings_to_frames(self, ts, frame_rate):
+        output = []
+        for t in ts:
+            output.append([
+                torch.round(t[0] * frame_rate), 
+                torch.round(t[1] * frame_rate)
+            ])
+        return output
+
+    def extract_sample(self, data) -> CharadesSample:
         video_info = OrderedDict(
             video_id=data["video_id"],
             scene=data["scene"],
@@ -65,14 +84,14 @@ class CharadesDataset(IterableDataset):
         if self.transform:
             frames = self.transform(frames)
 
-        timings = timings_to_frames(video_info["timings"], frame_rate)
+        timings = self._convert_timings_to_frames(video_info["timings"], frame_rate)
 
-        sample = {
-            'video': frames,
-            'framerate': frame_rate,
-            'objects': video_info["objects"],
-            'actions': video_info["actions"],
-            'timings': timings
-        }
+        sample = CharadesSample(
+            frames, 
+            frame_rate, 
+            video_info['objects'], 
+            video_info['actions'], 
+            timings
+        )
 
         return sample
