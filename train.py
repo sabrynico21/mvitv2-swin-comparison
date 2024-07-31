@@ -1,75 +1,29 @@
 import torch
 import torch.nn.functional as F
+import constants
 from torch import GradScaler, nn
 from torch.utils.data import DataLoader
-from torchvision import transforms
 from torch.optim import Adam, lr_scheduler
-from argparse import ArgumentParser
 from functools import reduce
 from charades import CharadesDataset
-from utils import ClipSampler, ResizeVideoTransform, VideoToTensorTransform, collate_fn
+from parse import parse_cmd
+from utils import ClipSampler, collate_fn
 
-# /----/ CONSTANTS /----/ #
-PREPROCESSING_TRANSFORMS = transforms.Compose([
-    ResizeVideoTransform((224, 224)),
-    VideoToTensorTransform()
-])
-NUM_EPOCHS = 10 
-NUM_CLASSES = 158
-NO_ACTION_TENSOR = F.one_hot(torch.tensor(NUM_CLASSES-1), num_classes=NUM_CLASSES)
-BATCH_SIZE = 4
-LEARNING_RATE = 0.001
-GRADIENT_ACCUMULATION_ITERS = BATCH_SIZE
+model, collation_method = parse_cmd()
 
-parser = ArgumentParser()
+dataset = CharadesDataset(transform=constants.PREPROCESSING_TRANSFORMS)
 
-parser.add_argument(
-    "-m",
-    "--model",
-    required=True,
-    help="Model to train",
-    choices=["mvitv2", "swin_t", "swin_s", "swin_b"],
-)
-parser.add_argument(
-    "-C",
-    "--collation",
-    default='padding',
-    help='Choose the collation mode: determine if videos length must be uniformed through padding or trimming'
-)
+data_loader = DataLoader(dataset, batch_size=constants.BATCH_SIZE, collate_fn=lambda batch: collate_fn(dataset, batch, collation_method))
 
-args = parser.parse_args()
-
-match args.model:
-    case 'mvitv2':
-        from torchvision.models.video import mvit_v2_s, MViT_V2_S_Weights
-        model = mvit_v2_s(weights=MViT_V2_S_Weights.KINETICS400_V1).cuda()
-    case 'swin_t':
-        from torchvision.models.video import swin3d_t, Swin3D_T_Weights
-        model = swin3d_t(weights=Swin3D_T_Weights.KINETICS400_V1).cuda()
-    case 'swin_s':
-        from torchvision.models.video import swin3d_s, Swin3D_S_Weights
-        model = swin3d_s(weights=Swin3D_S_Weights.KINETICS400_V1).cuda()
-    case 'swin_b':
-        from torchvision.models.video import swin3d_b, Swin3D_B_Weights
-        model = swin3d_b(weights=Swin3D_B_Weights.KINETICS400_V1).cuda()
-    case _:
-        raise Exception
-
-
-
-dataset = CharadesDataset(transform=PREPROCESSING_TRANSFORMS)
-
-data_loader = DataLoader(dataset, batch_size=BATCH_SIZE, collate_fn=lambda batch: collate_fn(dataset, batch, args.collation))
-
-model.head = nn.Linear(model.head[1].in_features, NUM_CLASSES).cuda()  # Adjust the final layer to the number of classes in Charades
+model.head = nn.Linear(model.head[1].in_features, constants.NUM_CLASSES).cuda()  # Adjust the final layer to the number of classes in Charades
 
 criterion = nn.BCEWithLogitsLoss()
-optimizer = Adam(model.parameters(), lr=LEARNING_RATE)
+optimizer = Adam(model.parameters(), lr=constants.LEARNING_RATE)
 scaler = GradScaler()
 scheduler = lr_scheduler.ExponentialLR(optimizer, 0.5)
 # Training loop
 
-for epoch in range(NUM_EPOCHS):
+for epoch in range(constants.NUM_EPOCHS):
     model.train()
     running_loss = 0.0
     for i, batch in enumerate(data_loader):
@@ -90,12 +44,12 @@ for epoch in range(NUM_EPOCHS):
 
             for clip_actions in action_ids_per_clip:
                 clip_actions = [
-                    F.one_hot(torch.tensor(action), num_classes=NUM_CLASSES) 
+                    F.one_hot(torch.tensor(action), num_classes=constants.NUM_CLASSES) 
                     for action in clip_actions
                 ]
 
                 if not clip_actions:
-                    truth.append(NO_ACTION_TENSOR)
+                    truth.append(constants.NO_ACTION_TENSOR)
                 else:
                     truth.append(reduce(torch.add, clip_actions))
             
@@ -114,7 +68,7 @@ for epoch in range(NUM_EPOCHS):
 
         running_loss += loss.item()
 
-        if (i+1) % GRADIENT_ACCUMULATION_ITERS == 0:
+        if (i+1) % constants.GRADIENT_ACCUMULATION_ITERS == 0:
             scaler.step(optimizer)
             scaler.update()
             # Zero the parameter gradients
