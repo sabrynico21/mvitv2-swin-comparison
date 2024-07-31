@@ -6,16 +6,11 @@ from collections import OrderedDict
 from typing import List
 from torchvision import transforms
 
-
-resize_frame = lambda f, sz: cv2.resize(f, sz)
-
 def collate_fn(dataset, batch, mode):
     if mode == 'padding':
         return collate_padding(dataset, batch)
     else:
         return collate_trimming(dataset, batch)
-
-
 
 def collate_padding(dataset, batch): # not working as intended
     from charades import CharadesSample
@@ -67,7 +62,7 @@ class ResizeVideoTransform:
         self.size = size
     
     def __call__(self, frames):
-        return np.array([resize_frame(f, self.size) for f in frames])
+        return np.array([cv2.resize(f, self.size) for f in frames])
 
 class VideoToTensorTransform:
     def __call__(self, frames):
