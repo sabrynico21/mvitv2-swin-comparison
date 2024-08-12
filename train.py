@@ -1,3 +1,4 @@
+from sys import stderr
 import torch
 import torch.nn.functional as F
 import constants
@@ -21,8 +22,8 @@ criterion = nn.BCEWithLogitsLoss()
 optimizer = Adam(model.parameters(), lr=constants.LEARNING_RATE)
 scaler = GradScaler()
 scheduler = lr_scheduler.ExponentialLR(optimizer, 0.5)
-# Training loop
 
+# Training loop
 for epoch in range(constants.NUM_EPOCHS):
     model.train()
     running_loss = 0.0
@@ -32,9 +33,16 @@ for epoch in range(constants.NUM_EPOCHS):
             #     Objects: {video.objects}, Timings: {video.timings}''')
             
             # for each video in input, sample n clips of 16 frames with a stride of tau (depends on framerate)
+            if not video.framerate:
+                print("Framerate not found in video metadata for current video. Skipping...", file=stderr)
+                continue
+
             clip_sampler = ClipSampler(video, max_samples=12)
             samples = clip_sampler(probability=0.85)
-
+            if not samples:
+                print("Framerate not found in video metadata for current video. Skipping...", file=stderr)
+                continue
+            
             clips, actions, intervals = zip(*samples)
             clips = torch.stack(clips).permute((0,2,1,3,4)).cuda()
 
