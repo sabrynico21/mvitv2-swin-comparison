@@ -1,3 +1,4 @@
+from sys import stderr
 import warnings
 import cv2
 import numpy as np
@@ -70,13 +71,17 @@ class VideoToTensorTransform:
         return torch.from_numpy(np.array([to_tensor(f) for f in frames]))
 
 class ClipSampler:
-    def __init__(self, data, stride_range: tuple = (6,12), max_samples: int = None, mode='sequential'):
+    def __init__(self, data, stride_range: tuple = (6,12), max_samples: int = None, clip_size = 16, mode='sequential'):
         self._data = data
         self.video = data.video
         self.framerate = data.framerate
-        self.wsize = 16
+        self.wsize = clip_size
         self.stride = round(min(stride_range[0] + self.framerate/2, stride_range[1] / (30.0/self.framerate)))
+        self.desired_span = 3 # seconds
+        self.dilation = round((self.framerate * self.desired_span) / (self.wsize - 1))
         self.nframes = self.video.size(0)
+        if self.nframes < (self.wsize-1) * self.dilation:
+            raise Exception("Insufficient video length. Skipping...")
         self.curr = 0
         self.sample_limit = max_samples
 
@@ -87,8 +92,10 @@ class ClipSampler:
     def _sample(self, single_action=False):
         # take the clip
         cstart = self.curr
-        cend = cstart + self.wsize
-        clip = self.video[cstart:cend]
+        cend = cstart + (self.wsize-1) * self.dilation
+        # print("cstart=", cstart, " cend=", cend, " nframes=", self.nframes, file=stderr)
+        clip = self.video[cstart:cend+1:self.dilation]
+        # print("cliplen=", len(clip), " framerate=", self.framerate, " dilation=", self.dilation, file=stderr)
         self.curr += self.stride
         clip_actions = OrderedDict()
         for tidx, action in enumerate(self._data.actions):
@@ -132,19 +139,22 @@ class ClipSampler:
         
         return self._sample()
 
-    def __call__(self, probability: float = 1):
+    def __call__(self, probability: float = 1, one_sample = True):
         if self.curr:
             raise Exception("Sampler is already being used as an iterator")
         if self.sample_limit and probability == 1:
             warnings.warn(f"Sample limit + 100% sampling probability is discouraged, as it reduces dataset usage", RuntimeWarning)
         
-        samples = []        
         rng = np.random.default_rng()
 
+        if one_sample:
+            self.curr = rng.integers(low=0, high=self.nframes - ((self.wsize-1) * self.dilation), size=None)
+            return [self._sample()]
+        
+        samples = []        
         while self.curr + self.wsize < self.nframes:
-            if self.sample_limit and len(samples) > self.sample_limit:
+            if self.sample_limit and len(samples) >= self.sample_limit:
                 break
-
             magic_number = rng.random()
             if magic_number > probability:
                 self.curr += self.stride
