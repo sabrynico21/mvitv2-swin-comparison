@@ -34,8 +34,9 @@ class CharadesDataset(IterableDataset):
             streaming=True,
             trust_remote_code=True,
         )
-        self.videos = self.videos.shuffle(buffer_size=shuffle_bufsize)
-        self.videos = self.videos.take(128*constants.BATCH_SIZE).with_format("torch")
+        self.videos = self.videos.shuffle(buffer_size=shuffle_bufsize, seed=42)
+        #self.videos = self.videos.take((128 if split=="train" else 32)*constants.BATCH_SIZE).with_format("torch")
+        self.videos = self.videos.take((225 if split=="train" else 32)*constants.BATCH_SIZE).with_format("torch")
         self.transform = transform
 
     def __iter__(self):

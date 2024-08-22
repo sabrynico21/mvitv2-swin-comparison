@@ -2,6 +2,7 @@ from sys import stderr
 import torch
 import torch.nn.functional as F
 import constants
+import numpy as np
 from torch import GradScaler, nn
 from torch.utils.data import DataLoader
 from torch.optim import Adam, lr_scheduler
@@ -16,7 +17,14 @@ dataset = CharadesDataset(transform=constants.PREPROCESSING_TRANSFORMS)
 
 data_loader = DataLoader(dataset, batch_size=constants.BATCH_SIZE, collate_fn=lambda batch: collate_fn(dataset, batch, collation_method))
 
-criterion = nn.BCEWithLogitsLoss()
+import pickle
+with open('action_freq.pkl', 'rb') as file:
+    action_freq_dict = pickle.load(file)
+positive_counts= torch.tensor(np.array(list(action_freq_dict.values())))
+negative_counts = 7986 - positive_counts
+
+pos_weight = negative_counts / positive_counts
+criterion = nn.BCEWithLogitsLoss(reduction='mean', pos_weight= pos_weight.cuda())
 optimizer = Adam(model.parameters(), lr=constants.LEARNING_RATE)
 scaler = GradScaler()
 scheduler = lr_scheduler.ExponentialLR(optimizer, 0.5)
@@ -27,9 +35,8 @@ for epoch in range(constants.NUM_EPOCHS):
     epoch_loss = 0.0
     num_batches = 0
     for i, batch in enumerate(data_loader):
-        num_batches += 1
-        batch_loss = 0.0
-        num_videos = 0
+        #batch_loss = 0.0
+        #num_videos = 0
 
         batch_truths = []
         batch_clips = []
@@ -57,9 +64,13 @@ for epoch in range(constants.NUM_EPOCHS):
                     else:
                         batch_truths.append(reduce(torch.add, clip_actions))
             except:
-                print("Couldn't extract any sample for current video. Skipping...", file=stderr)
+                print("Couldn't extract any sample from current video. Skipping...", file=stderr)
                 continue
         # print(len(batch_clips), file=stderr)
+        if not batch_clips:
+            print("Couldn't extract any clip from current batch. Skipping...")
+            continue
+            
         clips = torch.stack(batch_clips).permute((0,2,1,3,4)).cuda()
         with torch.amp.autocast('cuda'):
             # Forward pass
@@ -70,14 +81,16 @@ for epoch in range(constants.NUM_EPOCHS):
             # compute loss on each batch of clips
             truth = torch.stack(batch_truths).type(torch.float32).cuda()
             loss = criterion(predicted, truth)
-            batch_loss += loss.item()
-            num_videos += 1
-            
+            epoch_loss += loss.item()
+
+        num_batches += 1
+        predicted = predicted.cpu()
+        truth = truth.cpu()
         scaler.scale(loss).backward()
 
-        batch_loss /= num_videos
-
-        epoch_loss += batch_loss
+        #batch_loss /= num_videos
+        #epoch_loss += batch_loss
+        #num_batches += 1
 
         if (i+1) % constants.GRADIENT_ACCUMULATION_ITERS == 0:
             scaler.step(optimizer)
@@ -86,11 +99,11 @@ for epoch in range(constants.NUM_EPOCHS):
             optimizer.zero_grad()
         
         if (i+1) % constants.PRINT_BATCH_LOSS_EVERY == 0:
-            print(f"Epoch [{epoch + 1}/{constants.NUM_EPOCHS}], Batch [{i+1}], Loss: {batch_loss:.4f}", file=stderr)
+            print(f"Epoch [{epoch + 1}/{constants.NUM_EPOCHS}], Batch [{i+1}], Loss: {loss.item():.4f}", file=stderr)
             
     average_loss = epoch_loss / num_batches
     print(f"Epoch [{epoch + 1}/{constants.NUM_EPOCHS}], Average Loss: {average_loss:.4f}", file=stderr)
-    torch.save(model, f'{model_name}_epoch_{epoch+1}.pth')
+    torch.save(model, f'{model_name}_epoch_{epoch+4}.pth')
     scheduler.step()
 
 print("Finished Training")

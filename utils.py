@@ -71,20 +71,22 @@ class VideoToTensorTransform:
         return torch.from_numpy(np.array([to_tensor(f) for f in frames]))
 
 class ClipSampler:
-    def __init__(self, data, stride_range: tuple = (6,12), max_samples: int = None, clip_size = 16, mode='sequential'):
+    def __init__(self, data, stride_range: tuple = (6,12), max_samples: int = None, clip_size = 16, mode='dilated'):
         self._data = data
+        self.mode = mode
         self.video = data.video
         self.framerate = data.framerate
         self.wsize = clip_size
-        self.stride = round(min(stride_range[0] + self.framerate/2, stride_range[1] / (30.0/self.framerate)))
-        self.desired_span = 3 # seconds
-        self.dilation = round((self.framerate * self.desired_span) / (self.wsize - 1))
-        self.nframes = self.video.size(0)
-        if self.nframes < (self.wsize-1) * self.dilation:
-            raise Exception("Insufficient video length. Skipping...")
         self.curr = 0
         self.sample_limit = max_samples
-
+        self.nframes = self.video.size(0)
+        if mode == 'dilated':
+            self.desired_span = 3 # seconds
+            self.dilation = round((self.framerate * self.desired_span) / (self.wsize - 1))
+            if self.nframes < (self.wsize-1) * self.dilation:
+                raise Exception("Insufficient video length. Skipping...")
+        else:
+            self.stride = round(min(stride_range[0] + self.framerate/2, stride_range[1] / (30.0/self.framerate)))
     def __iter__(self):
         self.curr = 0
         return self
@@ -92,11 +94,17 @@ class ClipSampler:
     def _sample(self, single_action=False):
         # take the clip
         cstart = self.curr
-        cend = cstart + (self.wsize-1) * self.dilation
+        if self.mode == 'dilated':
+            cend = cstart + (self.wsize-1) * self.dilation
+            clip = self.video[cstart:cend+1:self.dilation]
+            # print("cliplen=", len(clip), " framerate=", self.framerate, " dilation=", self.dilation, file=stderr)
+        else:
+            cend = cstart + self.wsize
+            clip = self.video[cstart:cend]
+            self.curr += self.stride
+
         # print("cstart=", cstart, " cend=", cend, " nframes=", self.nframes, file=stderr)
-        clip = self.video[cstart:cend+1:self.dilation]
-        # print("cliplen=", len(clip), " framerate=", self.framerate, " dilation=", self.dilation, file=stderr)
-        self.curr += self.stride
+        
         clip_actions = OrderedDict()
         for tidx, action in enumerate(self._data.actions):
             tstart, tend = self._data.timings[tidx]
@@ -139,15 +147,15 @@ class ClipSampler:
         
         return self._sample()
 
-    def __call__(self, probability: float = 1, one_sample = True):
+    def __call__(self, probability: float = 1):
         if self.curr:
             raise Exception("Sampler is already being used as an iterator")
         if self.sample_limit and probability == 1:
             warnings.warn(f"Sample limit + 100% sampling probability is discouraged, as it reduces dataset usage", RuntimeWarning)
         
-        rng = np.random.default_rng()
+        rng = np.random.default_rng(42)
 
-        if one_sample:
+        if self.mode == 'dilated':
             self.curr = rng.integers(low=0, high=self.nframes - ((self.wsize-1) * self.dilation), size=None)
             return [self._sample()]
         

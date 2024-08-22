@@ -49,7 +49,7 @@ def parse_cmd():
         case 'local':
             if not args.path:
                 raise RuntimeError("When model is local, a path must be specified")
-            with open(args.path) as f:
+            with open(args.path, 'rb') as f:
                 model = torch.load(f)
 
     return model, args.collation, args.model
