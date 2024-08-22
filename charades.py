@@ -3,6 +3,7 @@ import cv2
 import numpy as np
 import os
 import torch
+import constants
 from dataclasses import dataclass
 from sys import stderr
 from typing import List
@@ -20,7 +21,7 @@ class CharadesSample:
     timings: List[int]
 
 class CharadesDataset(IterableDataset):
-    def __init__(self, transform=None, shuffle_bufsize=1024, split="train"):
+    def __init__(self, transform=None, shuffle_bufsize=128, split="train"):
         if split not in ["train", "test"]:
             raise ValueError("Invalid dataset split specified. Choices: train, test")
         
@@ -33,11 +34,13 @@ class CharadesDataset(IterableDataset):
             streaming=True,
             trust_remote_code=True,
         )
-        self.videos = self.videos.shuffle(buffer_size=shuffle_bufsize).with_format("torch")
+        self.videos = self.videos.shuffle(buffer_size=shuffle_bufsize, seed=42)
+        #self.videos = self.videos.take((128 if split=="train" else 32)*constants.BATCH_SIZE).with_format("torch")
+        self.videos = self.videos.take((225 if split=="train" else 32)*constants.BATCH_SIZE).with_format("torch")
         self.transform = transform
 
     def __iter__(self):
-        for video in cycle(self.videos):
+        for video in self.videos:
             yield video
 
     def _convert_timings_to_frames(self, ts, frame_rate):
@@ -78,7 +81,7 @@ class CharadesDataset(IterableDataset):
             frames.append(frame)
 
         video_stream.release()
-        print(video_path, frame_rate, len(frames), file=stderr)
+        # print(video_path, frame_rate, len(frames), file=stderr)
         frames = np.array(frames)
 
         if self.transform:
