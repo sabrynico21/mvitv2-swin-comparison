@@ -1,3 +1,5 @@
 __pycache__
 .vscode
 dataset/*
+action_freq.pkl
+Charades_v1_train.csv

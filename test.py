@@ -4,29 +4,21 @@ import constants
 import torch.nn.functional as F
 from torcheval.metrics import TopKMultilabelAccuracy, MultilabelAccuracy
 from sys import stderr
-from sklearn.metrics import precision_score, recall_score, f1_score, roc_auc_score, average_precision_score, hamming_loss
-from utils import ClipSampler, ResizeVideoTransform, VideoToTensorTransform, collate_fn
-from torchvision import transforms
+from utils import ClipSampler, collate_fn, load_action_weights
 from charades import CharadesDataset
 from torch.utils.data import DataLoader
 from torch import nn
 from functools import reduce
 from parse import parse_cmd
-from sklearn.metrics import top_k_accuracy_score
 
 model, collation_method, _ = parse_cmd()
 
 dataset = CharadesDataset(transform=constants.PREPROCESSING_TRANSFORMS, split="test")
 test_loader = DataLoader(dataset, batch_size=constants.BATCH_SIZE, collate_fn=lambda batch: collate_fn(dataset, batch, collation_method))
 
-import pickle
-with open('action_freq.pkl', 'rb') as file:
-    action_freq_dict = pickle.load(file)
-positive_counts= torch.tensor(np.array(list(action_freq_dict.values())))
-negative_counts = 2304 - positive_counts
+actions_weights = load_action_weights()
 
-pos_weight = negative_counts / positive_counts
-criterion = nn.BCEWithLogitsLoss(reduction='mean', pos_weight=pos_weight.cuda())
+criterion = nn.BCEWithLogitsLoss(reduction='mean', pos_weight=actions_weights.cuda())
 model.eval()
 
 all_predictions = []
@@ -55,15 +47,15 @@ with torch.no_grad():
                 action_ids_per_clip, _ = zip(*actions)
                 
                 for clip_actions in action_ids_per_clip:
+                    if not clip_actions:
+                        print("No actions found in current clip. Skipping...", file=stderr)
+                        continue
+
                     clip_actions = [
                         F.one_hot(torch.tensor(action), num_classes=constants.NUM_CLASSES) 
                         for action in clip_actions
                     ]
-
-                    if not clip_actions:
-                        batch_truths.append(constants.NO_ACTION_TENSOR)
-                    else:
-                        batch_truths.append(reduce(torch.add, clip_actions))
+                    batch_truths.append(reduce(torch.add, clip_actions))
             except:
                 print("Couldn't extract any sample from current video. Skipping...", file=stderr)
                 continue
@@ -115,41 +107,3 @@ for mode in ["exact_match","hamming","overlap","contain","belong"]:
         accuracy = top_k_accuracy.compute()
         print(f"Mode: {mode}, Top-{k} Accuracy: {accuracy.item()}", file=stderr)
 
-# def remove(action):
-#     if action[0] == "0":
-#         action = action[1:]
-#         if action[0] == "0":
-#             action = action[1:]
-#     return action
-# import pandas as pd
-# from collections import defaultdict
-# df = pd.read_csv('Charades_v1_train.csv')
-
-# num_classes = 158 
-# action_freq = {str(i): 0 for i in range(num_classes)}
-
-# # Process each row in the DataFrame
-# for actions_str in df['actions']:
-#     # Ensure actions_str is a string
-#     if isinstance(actions_str, str):
-#         # Split actions by ';'
-#         actions = actions_str.split(';')
-#         for action in actions:
-#             # Extract the action index, which is the part after 'c'
-#             if action:
-#                 action_index = action.split()[0][1:]
-#                 action_index = remove(action_index)
-#                 action_freq[action_index] += 1
-#     else:
-#         #print(f"Skipping invalid value: {actions_str}")
-#         print(actions_str)
-#         action_freq["157"] += 1
-
-# # Convert frequencies to a dictionary
-# action_freq = dict(action_freq)
-
-# for action_index, freq in action_freq.items():
-#     print(f'Action index: {action_index}, Frequency: {freq}')
-# import pickle
-# with open('action_freq.pkl', 'wb') as pkl_file:
-#     pickle.dump(action_freq, pkl_file)
