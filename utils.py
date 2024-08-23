@@ -1,8 +1,10 @@
-from sys import stderr
 import warnings
 import cv2
 import numpy as np
 import torch
+import constants
+import pickle
+from sys import stderr
 from collections import OrderedDict
 from typing import List
 from torchvision import transforms
@@ -57,19 +59,6 @@ def collate_trimming(dataset, batch):
 
     return samples
 
-
-class ResizeVideoTransform:
-    def __init__(self, size):
-        self.size = size
-    
-    def __call__(self, frames):
-        return np.array([cv2.resize(f, self.size) for f in frames])
-
-class VideoToTensorTransform:
-    def __call__(self, frames):
-        to_tensor = transforms.ToTensor()
-        return torch.from_numpy(np.array([to_tensor(f) for f in frames]))
-
 class ClipSampler:
     def __init__(self, data, stride_range: tuple = (6,12), max_samples: int = None, clip_size = 16, mode='dilated'):
         self._data = data
@@ -109,7 +98,12 @@ class ClipSampler:
         for tidx, action in enumerate(self._data.actions):
             tstart, tend = self._data.timings[tidx]
             if tstart <= cstart <= tend:
-                clip_actions.update({action: tend - cstart})
+                action = str(action)
+                # due to the actions merging into new classes, we need to check if the same action class was already added
+                if clip_actions.get(constants.CLASS_MAPPING[action], None):
+                    clip_actions[constants.CLASS_MAPPING[action]] += tend - cstart
+                else:
+                    clip_actions.update({constants.CLASS_MAPPING[action]: tend - cstart})
         if not clip_actions:
             actions = ([],0)
         else: 
@@ -172,3 +166,54 @@ class ClipSampler:
             samples.append(s)
             
         return samples
+
+
+def compute_action_frequencies():
+    import pandas as pd
+
+    df = pd.read_csv('Charades_v1_train.csv')
+
+    num_classes = constants.NUM_CLASSES 
+    action_freq = {i: 0 for i in range(num_classes)}
+    print(len(constants.CLASS_MAPPING))
+    # Process each row in the DataFrame
+    for row, actions_str in enumerate(df['actions']):
+        # Ensure actions_str is a string
+        if isinstance(actions_str, str):
+            # Split actions by ';'
+            actions = actions_str.split(';')
+            for action in actions:
+                # Extract the action index, which is the part after 'c'
+                if action:
+                    action_index = str(int(action.split()[0][1:]))
+                    print(action_index, df.loc[row]["id"])
+                    action_freq[constants.CLASS_MAPPING[action_index]] += 1
+        else:
+            print(f"Skipping invalid value: {actions_str}")
+            print(df.loc[row])
+            continue
+    # Convert frequencies to a dictionary
+    action_freq = dict(action_freq)
+
+    for action_index, freq in action_freq.items():
+        print(f'Action index: {action_index}, Frequency: {freq}')
+
+    with open('action_freq.pkl', 'wb') as pkl_file:
+        pickle.dump(action_freq, pkl_file)
+
+    return action_freq
+
+
+def load_action_weights():
+    try:
+        with open('action_freq.pkl', 'rb') as file:
+            action_freq_dict = pickle.load(file)
+    except:
+        print("Couldn't load action frequencies from file. Computing frequencies...", file=stderr)
+        action_freq_dict = compute_action_frequencies()
+    
+    positive_counts= torch.tensor(np.array(list(action_freq_dict.values())))
+    negative_counts = 7986 - positive_counts
+    pos_weights = negative_counts / positive_counts
+
+    return pos_weights

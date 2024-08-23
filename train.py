@@ -9,7 +9,7 @@ from torch.optim import Adam, lr_scheduler
 from functools import reduce
 from charades import CharadesDataset
 from parse import parse_cmd
-from utils import ClipSampler, collate_fn
+from utils import ClipSampler, collate_fn, load_action_weights
 
 model, collation_method, model_name = parse_cmd()
 
@@ -17,14 +17,9 @@ dataset = CharadesDataset(transform=constants.PREPROCESSING_TRANSFORMS)
 
 data_loader = DataLoader(dataset, batch_size=constants.BATCH_SIZE, collate_fn=lambda batch: collate_fn(dataset, batch, collation_method))
 
-import pickle
-with open('action_freq.pkl', 'rb') as file:
-    action_freq_dict = pickle.load(file)
-positive_counts= torch.tensor(np.array(list(action_freq_dict.values())))
-negative_counts = 7986 - positive_counts
+actions_weights = load_action_weights()
 
-pos_weight = negative_counts / positive_counts
-criterion = nn.BCEWithLogitsLoss(reduction='mean', pos_weight= pos_weight.cuda())
+criterion = nn.BCEWithLogitsLoss(reduction='mean', pos_weight=actions_weights.cuda())
 optimizer = Adam(model.parameters(), lr=constants.LEARNING_RATE)
 scaler = GradScaler()
 scheduler = lr_scheduler.ExponentialLR(optimizer, 0.5)
